@@ -1,4 +1,18 @@
 #include "main.h"
+#include "headers/gui/home.hpp"
+#include <cstdio>
+#include "okapi/api/chassis/model/skidSteerModel.hpp"
+#include "okapi/api/chassis/model/threeEncoderXDriveModel.hpp"
+#include "okapi/api/chassis/controller/chassisController.hpp"
+#include "okapi/impl/control/async/asyncMotionProfileControllerBuilder.hpp"
+#include "HolonomicLib/API.hpp"
+#include "headers/const.hpp"
+#include "okapi/impl/device/button/controllerButton.hpp"
+#include "okapi/impl/device/controllerUtil.hpp"
+#include "okapi/impl/device/motor/motorGroup.hpp"
+#include "pros/rtos.hpp"
+
+using namespace okapi::literals;
 
 /**
  * A callback function for LLEMU's center button.
@@ -7,13 +21,6 @@
  * "I was pressed!" and nothing.
  */
 void on_center_button() {
-	static bool pressed = false;
-	pressed = !pressed;
-	if (pressed) {
-		pros::lcd::set_text(2, "I was pressed!");
-	} else {
-		pros::lcd::clear_line(2);
-	}
 }
 
 /**
@@ -23,10 +30,7 @@ void on_center_button() {
  * to keep execution time for this mode under a few seconds.
  */
 void initialize() {
-	pros::lcd::initialize();
-	pros::lcd::set_text(1, "Hello PROS User!");
-
-	pros::lcd::register_btn1_cb(on_center_button);
+	createDisplay();
 }
 
 /**
@@ -58,7 +62,19 @@ void competition_initialize() {}
  * will be stopped. Re-enabling the robot will restart the task, not re-start it
  * from where it left off.
  */
-void autonomous() {}
+void autonomous() {
+	pros::ADIDigitalOut piston (indexer);
+	auto fly = okapi::MotorGroup({fly1, -fly2});
+	piston.set_value(true);
+	fly.setBrakeMode(okapi::MotorGroup::brakeMode::coast);
+
+	fly.moveVelocity(200);
+	pros::delay(5000);
+	piston.set_value(false);
+	pros::delay(300);
+	piston.set_value(true);
+
+}
 
 /**
  * Runs the operator control code. This function will be started in its own task
@@ -74,20 +90,112 @@ void autonomous() {}
  * task, not resume it from where it left off.
  */
 void opcontrol() {
-	pros::Controller master(pros::E_CONTROLLER_MASTER);
-	pros::Motor left_mtr(1);
-	pros::Motor right_mtr(2);
+	
+	/*
+	auto profile = okapi::AsyncMotionProfileControllerBuilder().withLimits(
+		{
+			1.0,
+			2.0,
+			10.0
+		}
+	).withOutput(chassis)
+	.buildMotionProfileController();
 
-	while (true) {
-		pros::lcd::print(0, "%d %d %d", (pros::lcd::read_buttons() & LCD_BTN_LEFT) >> 2,
-		                 (pros::lcd::read_buttons() & LCD_BTN_CENTER) >> 1,
-		                 (pros::lcd::read_buttons() & LCD_BTN_RIGHT) >> 0);
-		int left = master.get_analog(ANALOG_LEFT_Y);
-		int right = master.get_analog(ANALOG_RIGHT_Y);
+	profile->generatePath({
+		{0_ft, 0_ft, 0_deg},
+		{0_ft, 3_ft, 0_deg}
+	}, "Test");
 
-		left_mtr = left;
-		right_mtr = right;
+	profile->setTarget("Test");
 
-		pros::delay(20);
-	}
+	profile->waitUntilSettled();
+	*/
+
+	//motor groups
+
+	okapi::Controller master(okapi::ControllerId::master);
+
+	auto chassis = okapi::ChassisControllerBuilder().withMotors({topLMot, botLMot}, {topRMot, botRMot}).withDimensions({okapi::AbstractMotor::gearset::green}, {{4_in, 12.5_in}, okapi::imev5GreenTPR}).build();
+
+	auto xModel = std::dynamic_pointer_cast<okapi::SkidSteerModel>(chassis->getModel());
+
+	xModel->forward(200);
+
+	int flyState = 0;
+
+	auto upArrow = okapi::ControllerButton(okapi::ControllerDigital::down);
+	auto downArrow = okapi::ControllerButton(okapi::ControllerDigital::up);
+	auto r2 = okapi::ControllerButton(okapi::ControllerDigital::Y);
+	auto r1 = okapi::ControllerButton(okapi::ControllerDigital::L1);
+
+	auto l1 = okapi::ControllerButton(okapi::ControllerDigital::R2);
+	auto l2 = okapi::ControllerButton(okapi::ControllerDigital::R1);
+
+	auto xButton = okapi::ControllerButton(okapi::ControllerDigital::B);
+	auto bButton = okapi::ControllerButton(okapi::ControllerDigital::X);
+
+	auto intake = okapi::MotorGroup({-intake1, intake2});
+	auto fly = okapi::MotorGroup({fly1, -fly2});
+
+	pros::ADIDigitalOut piston (indexer);
+	pros::ADIDigitalOut spiderman (endgame);
+
+	bool verify = false;
+
+	fly.setBrakeMode(okapi::AbstractMotor::brakeMode::coast);
+
+	intake.setBrakeMode(okapi::AbstractMotor::brakeMode::coast);
+	
+  	while (true) {
+		//arcade drive
+    	xModel->arcade(
+      		master.getAnalog(strafeU),
+      		master.getAnalog(strafeD),
+      		master.getAnalog(rot)
+		);
+		
+
+		if (upArrow.isPressed() == true) {
+			intake.moveVoltage(12000);
+			upArrow.changedToReleased();
+		} else if (downArrow.isPressed() == true) {
+			//intake.moveVelocity(-500);
+			intake.moveVoltage(-12000);
+			downArrow.changedToReleased();
+		} else if (r2.isPressed() == true) {
+			intake.moveVelocity(0);
+			r2.changedToReleased();
+		}
+
+		if (l2.isPressed() == true) {
+			fly.moveVelocity(600);
+			l2.changedToReleased();
+		} else if (l1.isPressed() == true) {
+			fly.moveVelocity(0);
+			l1.changedToReleased();
+		}
+
+		if (xButton.isPressed() == true) {
+			piston.set_value(true);
+			xButton.changedToReleased();
+		} else if (bButton.isPressed() == true) {
+			piston.set_value(false);
+			bButton.changedToReleased();
+		}
+
+		if (r1.isPressed() == true) {
+			if (verify == true) spiderman.set_value(true);
+			else verify = true;
+			r1.changedToReleased();
+		} 
+
+		//little bit of delay
+    	pros::delay(1);
+
+
+
+
+  	}
+
+
 }
