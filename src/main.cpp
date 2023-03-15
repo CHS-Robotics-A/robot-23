@@ -1,5 +1,6 @@
 #include "main.h"
 #include "headers/gui/home.hpp"
+#include <algorithm>
 #include <cstdio>
 #include "okapi/api/chassis/model/skidSteerModel.hpp"
 #include "okapi/api/chassis/model/threeEncoderXDriveModel.hpp"
@@ -11,6 +12,7 @@
 #include "okapi/impl/device/controllerUtil.hpp"
 #include "okapi/impl/device/motor/motorGroup.hpp"
 #include "pros/rtos.hpp"
+#include <math.h>
 
 using namespace okapi::literals;
 
@@ -63,15 +65,7 @@ void competition_initialize() {}
  * from where it left off.
  */
 void autonomous() {
-	pros::ADIDigitalOut piston (indexer);
-	auto fly = okapi::MotorGroup({fly1, -fly2});
-	piston.set_value(true);
-	fly.setBrakeMode(okapi::MotorGroup::brakeMode::coast);
-
-	fly.moveVelocity(200);
-	pros::delay(5000);
-	piston.set_value(false);
-	pros::delay(300);
+	pros::ADIDigitalOut piston (endgame);
 	piston.set_value(true);
 
 }
@@ -114,6 +108,7 @@ void opcontrol() {
 	//motor groups
 
 	okapi::Controller master(okapi::ControllerId::master);
+	okapi::Controller slave(okapi::ControllerId::partner);
 
 	auto chassis = okapi::ChassisControllerBuilder().withMotors({topLMot, botLMot}, {topRMot, botRMot}).withDimensions({okapi::AbstractMotor::gearset::green}, {{4_in, 12.5_in}, okapi::imev5GreenTPR}).build();
 
@@ -136,6 +131,8 @@ void opcontrol() {
 
 	auto intake = okapi::MotorGroup({-intake1, intake2});
 	auto fly = okapi::MotorGroup({fly1, -fly2});
+
+	float flyspeed = 600;
 
 	pros::ADIDigitalOut piston (indexer);
 	pros::ADIDigitalOut spiderman (endgame);
@@ -168,10 +165,12 @@ void opcontrol() {
 		}
 
 		if (l2.isPressed() == true) {
-			fly.moveVelocity(600);
+			fly.moveVelocity(flyspeed);
+			flyState = 1;
 			l2.changedToReleased();
 		} else if (l1.isPressed() == true) {
 			fly.moveVelocity(0);
+			flyState=0;
 			l1.changedToReleased();
 		}
 
@@ -183,11 +182,47 @@ void opcontrol() {
 			bButton.changedToReleased();
 		}
 
-		if (r1.isPressed() == true) {
+		if (slave.getDigital(okapi::ControllerDigital::L1)) {
 			if (verify == true) spiderman.set_value(true);
 			else verify = true;
 			r1.changedToReleased();
 		} 
+
+
+		if (slave.getDigital(okapi::ControllerDigital::A)) {
+			flyspeed = 600;
+		}
+		if (slave.getDigital(okapi::ControllerDigital::B)) {
+			flyspeed = 300;
+		}
+		if (slave.getDigital(okapi::ControllerDigital::X)) {
+			flyspeed = 135;
+		}
+		if (slave.getDigital(okapi::ControllerDigital::Y)) {
+			flyspeed = 100;
+		}
+		if (slave.getDigital(okapi::ControllerDigital::up)) {
+			flyspeed = 120;
+		}
+		if (slave.getDigital(okapi::ControllerDigital::down)) {
+			flyspeed = 110;
+		}
+		if (slave.getDigital(okapi::ControllerDigital::left)) {
+			flyspeed = 115;
+		}
+		if (slave.getDigital(okapi::ControllerDigital::right)) {
+			flyspeed = 125;
+		}
+
+		flyspeed = std::min(std::max(50.0f, flyspeed+(slave.getAnalog(strafeD)/100)), 600.0f);
+		if (flyState) fly.moveVelocity(flyspeed);
+		else fly.moveVelocity(0);
+
+
+
+
+		slave.setText(1, 1, std::to_string(flyspeed));
+		slave.setText(2, 1, flyState? "Off": "On");
 
 		//little bit of delay
     	pros::delay(1);
